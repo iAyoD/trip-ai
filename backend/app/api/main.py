@@ -6,22 +6,19 @@ from app.services.unsplash_service import UnsplashService
 from app.config import get_settings
 import logging
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Smart Trip Planner API")
 
-# CORS configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify exact origins
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Initialize services
 settings = get_settings()
 trip_planner_agent = TripPlannerAgent()
 unsplash_service = UnsplashService(settings.unsplash_access_key)
@@ -31,10 +28,10 @@ async def create_trip_plan(request: TripPlanRequest) -> TripPlan:
     """
     创建旅行计划
     """
-    logger.info(f"Received trip plan request for {request.city}")
+    logger.info(f"收到 {request.city} 的旅行计划请求")
     try:
         # 生成旅行计划
-        trip_plan = trip_planner_agent.plan_trip(request)
+        trip_plan = await trip_planner_agent.plan_trip(request)
 
         # 为每个景点获取图片
         for day in trip_plan.days:
@@ -47,7 +44,7 @@ async def create_trip_plan(request: TripPlanRequest) -> TripPlan:
         
         return trip_plan
     except Exception as e:
-        logger.error(f"Error generating trip plan: {e}")
+        logger.error(f"生成旅行计划失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/poi/photo")
@@ -59,7 +56,7 @@ async def get_poi_photo(name: str):
         image_url = unsplash_service.get_photo_url(f"{name}")
         return {"success": True, "data": {"photo_url": image_url}}
     except Exception as e:
-        logger.error(f"Error fetching photo for {name}: {e}")
+        logger.error(f"获取景点图片失败: {e}")
         return {"success": False, "error": str(e)}
 
 @app.get("/health")

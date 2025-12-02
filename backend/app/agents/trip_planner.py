@@ -6,34 +6,66 @@ from app.models.schemas import TripPlanRequest, TripPlan, DayPlan, WeatherInfo, 
 from app.config import get_settings
 
 # Prompts
-ATTRACTION_AGENT_PROMPT = """你是景点搜索专家。
+ATTRACTION_AGENT_PROMPT = """你是景点搜索专家。你的任务是根据城市和用户偏好搜索合适的景点。
+
+**重要提示:**
+你必须使用工具来搜索景点!不要自己编造景点信息!
 
 **工具调用格式:**
-`[TOOL_CALL:amap_maps_text_search:keywords=景点,city=城市名]`
+使用maps_text_search工具时,必须严格按照以下格式:
+`[TOOL_CALL:maps_text_search:keywords=景点关键词,city=城市名]`
 
 **示例:**
-- `[TOOL_CALL:amap_maps_text_search:keywords=景点,city=北京]`
-- `[TOOL_CALL:amap_maps_text_search:keywords=博物馆,city=上海]`
+用户: "搜索北京的历史文化景点"
+你的回复: [TOOL_CALL:maps_text_search:keywords=历史文化,city=北京]
 
-**重要:**
-- 必须使用工具搜索,不要编造信息
-- 根据用户偏好({preferences})搜索{city}的景点
+用户: "搜索上海的公园"
+你的回复: [TOOL_CALL:maps_text_search:keywords=公园,city=上海]
+
+**注意:**
+1. 必须使用工具,不要直接回答
+2. 格式必须完全正确,包括方括号和冒号
+3. 参数用逗号分隔
 """
 
-WEATHER_AGENT_PROMPT = """你是天气查询专家。
+WEATHER_AGENT_PROMPT = """你是天气查询专家。你的任务是查询指定城市的天气信息。
+
+**重要提示:**
+你必须使用工具来查询天气!不要自己编造天气信息!
 
 **工具调用格式:**
-`[TOOL_CALL:amap_maps_weather:city=城市名]`
+使用maps_weather工具时,必须严格按照以下格式:
+`[TOOL_CALL:maps_weather:city=城市名]`
 
-请查询{city}的天气信息。
+**示例:**
+用户: "查询北京天气"
+你的回复: [TOOL_CALL:maps_weather:city=北京]
+
+用户: "上海的天气怎么样"
+你的回复: [TOOL_CALL:maps_weather:city=上海]
+
+**注意:**
+1. 必须使用工具,不要直接回答
+2. 格式必须完全正确,包括方括号和冒号
 """
 
-HOTEL_AGENT_PROMPT = """你是酒店推荐专家。
+HOTEL_AGENT_PROMPT = """你是酒店推荐专家。你的任务是根据城市和景点位置推荐合适的酒店。
+
+**重要提示:**
+你必须使用工具来搜索酒店!不要自己编造酒店信息!
 
 **工具调用格式:**
-`[TOOL_CALL:amap_maps_text_search:keywords=酒店,city=城市名]`
+使用maps_text_search工具搜索酒店时,必须严格按照以下格式:
+`[TOOL_CALL:maps_text_search:keywords=酒店,city=城市名]`
 
-请搜索{city}的{accommodation}酒店。
+**示例:**
+用户: "搜索北京的酒店"
+你的回复: [TOOL_CALL:maps_text_search:keywords=酒店,city=北京]
+
+**注意:**
+1. 必须使用工具,不要直接回答
+2. 格式必须完全正确,包括方括号和冒号
+3. 关键词使用"酒店"或"宾馆"
 """
 
 PLANNER_AGENT_PROMPT = """你是行程规划专家。
@@ -102,8 +134,9 @@ PLANNER_AGENT_PROMPT = """你是行程规划专家。
 3. 每天安排2-3个景点
 4. 考虑景点距离和游览时间
 5. 包含早中晚三餐
-6. 提供实用建议
-7. 包含预算信息,根据景点门票、酒店价格、餐饮标准和交通方式估算
+6. 包含酒店信息
+7. 提供实用建议
+8. 包含预算信息,根据景点门票、酒店价格、餐饮标准和交通方式估算
 """
 
 class TripPlannerAgent:
@@ -112,27 +145,11 @@ class TripPlannerAgent:
         self.llm = HelloAgentsLLM()
 
         # 创建共享的MCP工具实例
-        # Note: In a real scenario, we'd want to manage the lifecycle of this process better
-        self.mcp_tool = MCPTool(
-            name="amap_mcp",
-            command="uvx", # Using uvx as per README recommendation for python environment
-            args=["amap-mcp-server"], # Assuming the package is installed or available via uvx
-            env={"AMAP_API_KEY": settings.amap_api_key},
-            auto_expand=True
-        )
-        
-        # Fallback if uvx doesn't work directly with the package name, 
-        # we might need to install it first or use npx as in the original code.
-        # But let's try to stick to python ecosystem if possible, or revert to npx if needed.
-        # The README mentioned: "command='npx', args=['-y', '@sugarforever/amap-mcp-server']"
-        # Let's stick to the README's npx command for reliability unless the user insists on python-only.
-        # The user asked to use uv pip for dependencies, but this is an external tool.
-        # Let's use npx for the MCP server as it's a node package.
         self.mcp_tool = MCPTool(
             name="amap_mcp",
             command="npx",
-            args=["-y", "@sugarforever/amap-mcp-server"],
-            env={"AMAP_API_KEY": settings.amap_api_key},
+            args=["-y", "@amap/amap-maps-mcp-server"],
+            env={"AMAP_MAPS_API_KEY": settings.amap_api_key},
             auto_expand=True
         )
 
@@ -195,19 +212,19 @@ class TripPlannerAgent:
 请生成详细的旅行计划,包括每天的景点安排、餐饮推荐、住宿信息和预算明细。
 """
 
-    def plan_trip(self, request: TripPlanRequest) -> TripPlan:
+    async def plan_trip(self, request: TripPlanRequest) -> TripPlan:
         # 步骤1: 景点搜索
-        attraction_response = self.attraction_agent.run(
+        attraction_response = await self.attraction_agent.run(
             f"请搜索{request.city}的{request.preferences}景点"
         )
 
         # 步骤2: 天气查询
-        weather_response = self.weather_agent.run(
+        weather_response = await self.weather_agent.run(
             f"请查询{request.city}的天气"
         )
 
         # 步骤3: 酒店推荐
-        hotel_response = self.hotel_agent.run(
+        hotel_response = await self.hotel_agent.run(
             f"请搜索{request.city}的{request.accommodation}酒店"
         )
 
@@ -215,7 +232,7 @@ class TripPlannerAgent:
         planner_query = self._build_planner_query(
             request, attraction_response, weather_response, hotel_response
         )
-        planner_response = self.planner_agent.run(planner_query)
+        planner_response = await self.planner_agent.run(planner_query)
 
         # 步骤5: 解析JSON
         # Clean up response to ensure it's valid JSON
